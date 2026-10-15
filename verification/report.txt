@@ -1,0 +1,57 @@
+Upstream SHA-256: 420bc64e3548579b1b255aed33be055be1688c3427f429dc5f1c28daf8639a2c
+Patch SHA-256: 6a014fb6eade0136cffb210645dbeb7ce4e4af031513658fb74e863a520f3983
+Source snapshot files: 1474
+Changed files: 25
+Dry-run and application: PASS, fuzz disabled
+All patched files match approved source byte-for-byte: PASS
+
+checking file crates/ui-egui/src/brush_panel.rs
+checking file crates/ui-egui/src/brush_panel_tests.rs
+checking file crates/ui-egui/src/brushes_tab.rs
+checking file crates/ui-egui/src/control.rs
+checking file crates/ui-egui/src/dock.rs
+checking file crates/ui-egui/src/dock_tests.rs
+checking file crates/ui-egui/src/i18n/cs.tsv
+checking file crates/ui-egui/src/i18n/de.tsv
+checking file crates/ui-egui/src/i18n/el.tsv
+checking file crates/ui-egui/src/i18n/es.tsv
+checking file crates/ui-egui/src/i18n/fr.tsv
+checking file crates/ui-egui/src/i18n/id.tsv
+checking file crates/ui-egui/src/i18n/it.tsv
+checking file crates/ui-egui/src/i18n/ja.tsv
+checking file crates/ui-egui/src/i18n/ko.tsv
+checking file crates/ui-egui/src/i18n/nl.tsv
+checking file crates/ui-egui/src/i18n/pl.tsv
+checking file crates/ui-egui/src/i18n/pt-br.tsv
+checking file crates/ui-egui/src/i18n/ru.tsv
+checking file crates/ui-egui/src/i18n/uk.tsv
+checking file crates/ui-egui/src/i18n/zh-hans.tsv
+checking file crates/ui-egui/src/i18n/zh-hant.tsv
+checking file crates/ui-egui/src/menus.rs
+checking file crates/ui-egui/src/panels.rs
+checking file crates/ui-egui/src/state.rs
+patching file crates/ui-egui/src/brush_panel.rs
+patching file crates/ui-egui/src/brush_panel_tests.rs
+patching file crates/ui-egui/src/brushes_tab.rs
+patching file crates/ui-egui/src/control.rs
+patching file crates/ui-egui/src/dock.rs
+patching file crates/ui-egui/src/dock_tests.rs
+patching file crates/ui-egui/src/i18n/cs.tsv
+patching file crates/ui-egui/src/i18n/de.tsv
+patching file crates/ui-egui/src/i18n/el.tsv
+patching file crates/ui-egui/src/i18n/es.tsv
+patching file crates/ui-egui/src/i18n/fr.tsv
+patching file crates/ui-egui/src/i18n/id.tsv
+patching file crates/ui-egui/src/i18n/it.tsv
+patching file crates/ui-egui/src/i18n/ja.tsv
+patching file crates/ui-egui/src/i18n/ko.tsv
+patching file crates/ui-egui/src/i18n/nl.tsv
+patching file crates/ui-egui/src/i18n/pl.tsv
+patching file crates/ui-egui/src/i18n/pt-br.tsv
+patching file crates/ui-egui/src/i18n/ru.tsv
+patching file crates/ui-egui/src/i18n/uk.tsv
+patching file crates/ui-egui/src/i18n/zh-hans.tsv
+patching file crates/ui-egui/src/i18n/zh-hant.tsv
+patching file crates/ui-egui/src/menus.rs
+patching file crates/ui-egui/src/panels.rs
+patching file crates/ui-egui/src/state.rs

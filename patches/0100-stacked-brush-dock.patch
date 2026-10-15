@@ -1,0 +1,771 @@
+--- a/crates/ui-egui/src/brush_panel.rs
++++ b/crates/ui-egui/src/brush_panel.rs
+@@ -1,4 +1,4 @@
+-//! Window › Brush Settings (F5) and Window › Brushes: Photoshop's floating brush panel.
++//! Window › Brush Settings (F5) and Window › Brushes: floating or sidebar-attached brush panel.
+ //!
+ //! Brush Settings: the section list with enable boxes on the left (clicking a name shows and turns
+ //! on that section), the selected section's controls on the right (see [`crate::brush_sections`]),
+@@ -316,33 +316,55 @@
+     let before = app.session.tools.brush.clone();
+     let mut b = before.clone();
+     let section = app.ui.brush_section.min(SECTIONS.len() - 1);
+-    ui.horizontal_top(|ui| {
+-        section_list(app, ui, &mut b);
+-        widgets::vline(ui, 482.0);
+-        ui.vertical(|ui| {
+-            ui.set_width(WIDTH - 190.0);
+-            let name = SECTIONS.get(section).map_or("Brush Tip Shape", |entry| entry.0);
+-            ui.label(RichText::new(tl!(name)).font(theme::semibold(12.5)).color(t.text));
+-            ui.add_space(6.0);
+-            let on = section_flag(&mut b, section).is_none_or(|f| *f);
+-            egui::ScrollArea::vertical().id_salt(("brush-section", section)).max_height(450.0).auto_shrink([false, false]).show(ui, |ui| {
+-                ui.set_width(WIDTH - 204.0);
+-                // A section that's off shows its options greyed out (Photoshop). A tip picked in
+-                // the grid copies the tip fields only — the dynamics sections stay (Photoshop).
+-                // The picked preset is recorded by name (`brush.presets.setCurrent`, identity, so
+-                // look-alike duplicates stay distinct), since the engine can't infer it from the
+-                // brush afterwards.
+-                ui.add_enabled_ui(on, |ui| section_body(ui, &mut b, section, &app.session.tools.presets, app.session.tools.current_preset.as_deref()))
+-                    .inner
+-                    .inspect(|name| run_or_status(app, "brush.presets.setCurrent", json!({ "name": name })));
++    if ui.available_width() < WIDTH - 20.0 {
++        egui::ComboBox::from_id_salt("brush-section-select").selected_text(tl!(SECTIONS[section].0)).show_ui(ui, |ui| {
++            for (i, (name, _)) in SECTIONS.iter().enumerate() {
++                ui.selectable_value(&mut app.ui.brush_section, i, tl!(*name));
++            }
++        });
++        let section = app.ui.brush_section.min(SECTIONS.len() - 1);
++        ui.horizontal_wrapped(|ui| {
++            if let Some(flag) = section_flag(&mut b, section) {
++                ui.checkbox(flag, crate::i18n::fmt(tl!("Enable {name}"), &[("name", tl!(SECTIONS[section].0))]));
++            }
++            if let Some(lock) = section_lock(&mut b, section) {
++                ui.checkbox(lock, tl!("Lock: keep these settings when picking another preset"));
++            }
++        });
++        let on = section_flag(&mut b, section).is_none_or(|f| *f);
++        ui.add_enabled_ui(on, |ui| section_body(ui, &mut b, section, &app.session.tools.presets, app.session.tools.current_preset.as_deref()))
++            .inner
++            .inspect(|name| run_or_status(app, "brush.presets.setCurrent", json!({ "name": name })));
++    } else {
++        ui.horizontal_top(|ui| {
++            section_list(app, ui, &mut b);
++            widgets::vline(ui, 482.0);
++            ui.vertical(|ui| {
++                ui.set_width(WIDTH - 190.0);
++                let name = SECTIONS.get(section).map_or("Brush Tip Shape", |entry| entry.0);
++                ui.label(RichText::new(tl!(name)).font(theme::semibold(12.5)).color(t.text));
++                ui.add_space(6.0);
++                let on = section_flag(&mut b, section).is_none_or(|f| *f);
++                egui::ScrollArea::vertical().id_salt(("brush-section", section)).max_height(450.0).auto_shrink([false, false]).show(ui, |ui| {
++                    ui.set_width(WIDTH - 204.0);
++                    // A section that's off shows its options greyed out (Photoshop). A tip picked in
++                    // the grid copies the tip fields only — the dynamics sections stay (Photoshop).
++                    // The picked preset is recorded by name (`brush.presets.setCurrent`, identity, so
++                    // look-alike duplicates stay distinct), since the engine can't infer it from the
++                    // brush afterwards.
++                    ui.add_enabled_ui(on, |ui| section_body(ui, &mut b, section, &app.session.tools.presets, app.session.tools.current_preset.as_deref()))
++                        .inner
++                        .inspect(|name| run_or_status(app, "brush.presets.setCurrent", json!({ "name": name })));
++                });
+             });
+         });
+-    });
++    }
+     ui.add_space(6.0);
+     widgets::hairline(ui);
+     ui.add_space(6.0);
+     ui.horizontal(|ui| {
+-        let (r, _) = ui.allocate_exact_size(vec2(STRIP.0 as f32, STRIP.1 as f32), Sense::hover());
++        let width = (ui.available_width() - 40.0).clamp(1.0, STRIP.0 as f32);
++        let (r, _) = ui.allocate_exact_size(vec2(width, STRIP.1 as f32), Sense::hover());
+         ui.painter().rect_filled(r, t.radius_sm, t.field);
+         let tex = brush_preview::stroke_texture(ui.ctx(), "settings-strip", &b, STRIP.0, STRIP.1, t.text);
+         ui.painter().image(tex.id(), r, full_uv(), Color32::WHITE);
+@@ -368,8 +390,37 @@
+     commit_gesture(app, ui.ctx(), &before, &b);
+ }
+ 
++/// The existing controls inside a normal, resizable dock group.
++pub fn attached(app: &mut PhotocraftApp, ui: &mut egui::Ui) {
++    if !app.ui.panels.brush_settings || !app.ui.panels.brush_attached {
++        return;
++    }
++    app.ui.brush_tab = app.ui.dock_tabs.brushes.min(1);
++    if app.ui.brush_tab == 1 {
++        crate::brushes_tab::show(app, ui);
++    } else {
++        egui::ScrollArea::vertical().id_salt("attached-brush-settings").auto_shrink([false, false]).show(ui, |ui| settings_tab(app, ui));
++    }
++}
++
++fn content(app: &mut PhotocraftApp, ui: &mut egui::Ui) {
++    ui.horizontal(|ui| {
++        for (i, name) in [tl!("Brush Settings"), tl!("Brushes")].iter().enumerate() {
++            if widgets::pill_tab(ui, name, app.ui.brush_tab == i).clicked() {
++                app.ui.brush_tab = i;
++            }
++        }
++    });
++    widgets::hairline(ui);
++    if app.ui.brush_tab == 1 {
++        crate::brushes_tab::show(app, ui);
++    } else {
++        settings_tab(app, ui);
++    }
++}
++
+ pub fn window(app: &mut PhotocraftApp, ctx: &egui::Context) {
+-    if !app.ui.panels.brush_settings {
++    if !app.ui.panels.brush_settings || app.ui.panels.brush_attached {
+         return;
+     }
+     let t = Tokens::get(ctx);
+@@ -390,13 +441,11 @@
+         .show(ctx, |ui| {
+             ui.set_width(WIDTH);
+             ui.horizontal(|ui| {
+-                let mut tab = app.ui.brush_tab;
+-                for (i, name) in [tl!("Brush Settings"), tl!("Brushes")].iter().enumerate() {
+-                    if widgets::pill_tab(ui, name, tab == i).clicked() {
+-                        tab = i;
+-                    }
++                if ui.button(tl!("Attach to right sidebar")).clicked() {
++                    app.ui.panels.brush_attached = true;
++                    app.ui.dock_tabs.brushes = app.ui.brush_tab.min(1);
++                    crate::dock::reveal(app, crate::dock::Group::Brushes);
+                 }
+-                app.ui.brush_tab = tab;
+                 ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                     if icons::button(ui, "x", 20.0, false, tl!("Close")).clicked() {
+                         open = false;
+@@ -406,11 +455,7 @@
+             ui.add_space(6.0);
+             widgets::hairline(ui);
+             ui.add_space(6.0);
+-            if app.ui.brush_tab == 1 {
+-                crate::brushes_tab::show(app, ui);
+-            } else {
+-                settings_tab(app, ui);
+-            }
++            content(app, ui);
+         });
+     if !open {
+         app.ui.panels.brush_settings = false;
+--- a/crates/ui-egui/src/brush_panel_tests.rs
++++ b/crates/ui-egui/src/brush_panel_tests.rs
+@@ -6,6 +6,118 @@
+ 
+ fn app() -> PhotocraftApp {
+     PhotocraftApp::new(photocraft_engine::Session::new(), crate::Services::default())
++}
++
++#[test]
++fn brush_attachment_round_trips_and_old_layouts_stay_floating() {
++    let panels = crate::state::Panels { brush_attached: true, brush_settings: true, ..Default::default() };
++    let mut saved = serde_json::to_value(&panels).unwrap();
++    let restored: crate::state::Panels = serde_json::from_value(saved.clone()).unwrap();
++    assert!(restored.brush_attached);
++    assert!(restored.brush_settings);
++    saved.as_object_mut().unwrap().remove("brush_attached");
++    let legacy: crate::state::Panels = serde_json::from_value(saved.clone()).unwrap();
++    assert!(!legacy.brush_attached);
++    saved["brush_attached"] = json!("invalid");
++    assert!(serde_json::from_value::<crate::state::Panels>(saved).is_err());
++}
++
++#[test]
++fn remembered_layout_restores_brush_attachment() {
++    let mut original = app();
++    original.ui.panels.brush_settings = true;
++    original.ui.panels.brush_attached = true;
++    original.session.prefs.edit(|p| p.workspace.remember_workspace_changes = true);
++    let ctx = egui::Context::default();
++    crate::dock::persist(&mut original, &ctx);
++    let saved = original.session.prefs().panel_layout.clone();
++    let mut restored = app();
++    crate::dock::apply(&mut restored, &saved);
++    assert!(restored.ui.panels.brush_settings);
++    assert!(restored.ui.panels.brush_attached);
++}
++
++fn attachment_harness() -> Harness<'static, PhotocraftApp> {
++    let mut app = app();
++    app.ui.panels.brush_settings = true;
++    app.ui.brush_tab = 1;
++    let mut h = Harness::builder().with_size(vec2(1600.0, 1000.0)).build_ui_state(
++        |ui, app: &mut PhotocraftApp| {
++            let ctx = ui.ctx().clone();
++            if !ctx.fonts(|f| f.families().contains(&egui::FontFamily::Name("medium".into()))) {
++                return;
++            }
++            crate::panels::right_dock(app, ui);
++            egui::CentralPanel::default().show(ui, |ui| {
++                app.last_canvas_rect = ui.max_rect();
++            });
++            window(app, &ctx);
++        },
++        app,
++    );
++    PhotocraftApp::setup_context(&h.ctx, crate::theme::ThemeKind::default());
++    h.run_steps(4);
++    h
++}
++
++fn brush_group_menu(h: &mut Harness<'static, PhotocraftApp>) {
++    let strip = crate::dock::last_strips(&h.ctx).into_iter().find(|s| s.group == crate::dock::Group::Brushes).unwrap();
++    let pos = strip.menu.center();
++    h.event(egui::Event::PointerMoved(pos));
++    h.event(egui::Event::PointerButton { pos, button: egui::PointerButton::Primary, pressed: true, modifiers: egui::Modifiers::NONE });
++    h.run_steps(1);
++    h.event(egui::Event::PointerButton { pos, button: egui::PointerButton::Primary, pressed: false, modifiers: egui::Modifiers::NONE });
++    h.run_steps(3);
++}
++
++#[test]
++fn brush_window_attaches_without_taking_extra_canvas_width_and_floats_again() {
++    use egui_kittest::kittest::Queryable;
++    let mut h = attachment_harness();
++    let initial_width = h.state().last_canvas_rect.width();
++    h.get_by_label("Attach to right sidebar").click();
++    h.run_steps(4);
++    assert!(h.state().ui.panels.brush_attached);
++    assert_eq!(h.state().last_canvas_rect.width(), initial_width);
++    let groups = crate::dock::last_rects(&h.ctx);
++    let color = groups.iter().position(|(g, _)| *g == crate::dock::Group::Color).unwrap();
++    assert_eq!(groups[color + 1].0, crate::dock::Group::Brushes);
++    assert!(h.query_by_label("Attach to right sidebar").is_none());
++    brush_group_menu(&mut h);
++    h.get_by_label("Float").click();
++    h.run_steps(4);
++    assert!(!h.state().ui.panels.brush_attached);
++    assert_eq!(h.state().last_canvas_rect.width(), initial_width);
++    assert!(h.state().ui.panels.brush_settings);
++}
++
++#[test]
++fn attached_brush_panel_closes_without_changing_brush() {
++    use egui_kittest::kittest::Queryable;
++    let mut h = attachment_harness();
++    let brush = h.state().session.tools.brush.clone();
++    h.get_by_label("Attach to right sidebar").click();
++    h.run_steps(4);
++    brush_group_menu(&mut h);
++    h.get_by_label("Close Tab Group").click();
++    h.run_steps(4);
++    assert!(!h.state().ui.panels.brush_settings);
++    assert!(h.query_by_label("Float").is_none());
++    assert_eq!(h.state().session.tools.brush, brush);
++}
++
++#[test]
++fn attached_panel_selects_presets_through_existing_commands() {
++    use egui_kittest::kittest::Queryable;
++    let mut h = attachment_harness();
++    h.get_by_label("Attach to right sidebar").click();
++    h.run_steps(4);
++    h.state_mut().ui.brushes_panel.filter = "Oil Bristle".into();
++    h.run_steps(4);
++    h.get_by_label("Oil Bristle").click();
++    h.run_steps(4);
++    assert_eq!(h.state().session.tools.current_preset.as_deref(), Some("Oil Bristle"));
++    assert_eq!(last_journal(h.state()).unwrap(), ("tools.setBrush".into(), json!({"preset": "Oil Bristle"})));
+ }
+ 
+ fn last_journal(app: &PhotocraftApp) -> Option<(String, Value)> {
+--- a/crates/ui-egui/src/brushes_tab.rs
++++ b/crates/ui-egui/src/brushes_tab.rs
+@@ -16,9 +16,7 @@
+ use photocraft_engine::paint::{BrushPreset, MAX_BRUSH_SIZE};
+ use serde_json::json;
+ 
+-use crate::brush_panel::{
+-    BrushesPanelState, BrushesView, Renaming, UNGROUPED, WIDTH, commit_gesture, full_uv, grouped_presets, new_preset_name, run_or_status,
+-};
++use crate::brush_panel::{BrushesPanelState, BrushesView, Renaming, UNGROUPED, commit_gesture, full_uv, grouped_presets, new_preset_name, run_or_status};
+ use crate::brush_preview;
+ use crate::theme::{self, Tokens};
+ use crate::{PhotocraftApp, icons, widgets};
+@@ -869,13 +867,14 @@
+ /// The Brushes tab.
+ pub fn show(app: &mut PhotocraftApp, ui: &mut egui::Ui) {
+     let t = Tokens::get(ui.ctx());
++    let width = ui.available_width();
+     // Size of the current brush (Photoshop's Brushes panel slider).
+     let before = app.session.tools.brush.clone();
+     let mut b = before.clone();
+     ui.horizontal(|ui| {
+         ui.label(RichText::new(tl!("Size")).color(t.text_dim));
+         let mut lv = b.size.max(1.0).ln();
+-        ui.add_sized(vec2(WIDTH - 140.0, 18.0), |ui: &mut egui::Ui| {
++        ui.add_sized(vec2((width - 140.0).max(24.0), 18.0), |ui: &mut egui::Ui| {
+             let r = widgets::slider(ui, &mut lv, 0.0..=MAX_BRUSH_SIZE.ln(), None);
+             if r.changed() {
+                 b.size = lv.exp().round().clamp(1.0, MAX_BRUSH_SIZE);
+@@ -892,7 +891,7 @@
+     ui.horizontal(|ui| {
+         icons::paint(ui, egui::Rect::from_min_size(ui.cursor().min + vec2(0.0, 3.0), vec2(16.0, 16.0)), "search", 14.0, t.text_faint);
+         ui.add_space(20.0);
+-        ui.add(egui::TextEdit::singleline(&mut app.ui.brushes_panel.filter).hint_text(tl!("Search Brushes")).desired_width(WIDTH - 120.0));
++        ui.add(egui::TextEdit::singleline(&mut app.ui.brushes_panel.filter).hint_text(tl!("Search Brushes")).desired_width((width - 120.0).max(40.0)));
+         ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+             let view = &mut app.ui.brushes_panel.view;
+             if icons::button(ui, "grid-2x2", 24.0, *view == BrushesView::Grid, "Grid view").clicked() {
+@@ -904,7 +903,11 @@
+         });
+     });
+     ui.add_space(6.0);
+-    let acts = preset_list(ui, &app.session.tools.presets, app.session.tools.current_preset.as_deref(), &mut app.ui.brushes_panel, PANEL_LIST);
++    let mut layout = PANEL_LIST;
++    if app.ui.panels.brush_attached {
++        layout.max_height = (ui.available_height() - 40.0).max(24.0);
++    }
++    let acts = preset_list(ui, &app.session.tools.presets, app.session.tools.current_preset.as_deref(), &mut app.ui.brushes_panel, layout);
+     apply(app, acts);
+     ui.add_space(4.0);
+     widgets::hairline(ui);
+--- a/crates/ui-egui/src/control.rs
++++ b/crates/ui-egui/src/control.rs
+@@ -606,6 +606,7 @@
+                 }
+                 if let Some(i) = brush_tab {
+                     app.ui.brush_tab = (i as usize).min(1);
++                    app.ui.dock_tabs.brushes = app.ui.brush_tab;
+                 }
+                 if let Some(v) = brushes_view {
+                     app.ui.brushes_panel.view = v;
+--- a/crates/ui-egui/src/dock.rs
++++ b/crates/ui-egui/src/dock.rs
+@@ -28,6 +28,8 @@
+ pub enum Group {
+     /// Color | Swatches | Gradients | Patterns.
+     Color,
++    /// The attached Brushes / Brush Settings window.
++    Brushes,
+     /// Properties | Adjustments.
+     Properties,
+     /// Character | Paragraph (not in the default workspace; Window › Character opens it, #150).
+@@ -42,11 +44,12 @@
+ 
+ impl Group {
+     /// Photoshop Essentials order, top to bottom.
+-    pub const ALL: [Group; 6] = [Group::Color, Group::Properties, Group::Character, Group::Navigator, Group::History, Group::Layers];
++    pub const ALL: [Group; 7] = [Group::Color, Group::Brushes, Group::Properties, Group::Character, Group::Navigator, Group::History, Group::Layers];
+ 
+     pub fn key(self) -> &'static str {
+         match self {
+             Group::Color => "color",
++            Group::Brushes => "brushes",
+             Group::Properties => "properties",
+             Group::Character => "character",
+             Group::Navigator => "navigator",
+@@ -60,6 +63,7 @@
+     pub fn default_height(self) -> f32 {
+         match self {
+             Group::Color => 190.0,
++            Group::Brushes => 250.0,
+             Group::Properties => 250.0,
+             Group::Character => 270.0,
+             Group::Navigator => 210.0,
+@@ -73,6 +77,7 @@
+     pub fn compact_height(self) -> f32 {
+         match self {
+             Group::Color => 130.0,
++            Group::Brushes => 160.0,
+             Group::Properties => 160.0,
+             Group::Character => 160.0,
+             Group::Navigator => 140.0,
+@@ -103,6 +108,7 @@
+             // Photoshop Essentials: Color | Swatches | Gradients | Patterns.
+             Group::Color if pro => &["Color", "Swatches", "Gradients", "Patterns"],
+             Group::Color => &["Swatches", "Color", "Gradients", "Patterns"],
++            Group::Brushes => &["Brush Settings", "Brushes"],
+             Group::Properties => &["Properties", "Adjustments"],
+             Group::Character => &["Character", "Paragraph"],
+             Group::Navigator => &["Navigator", "Histogram", "Info"],
+@@ -114,12 +120,13 @@
+     /// Tabs that lay out their own scrolling list and footer, or size themselves to the group
+     /// (the Navigator's preview grows with it, as in Photoshop: #2726).
+     pub fn scrolls_itself(self, tab: usize) -> bool {
+-        matches!((self, tab), (Group::Layers, 0) | (Group::History, 0) | (Group::Navigator, 0))
++        matches!((self, tab), (Group::Layers, 0) | (Group::History, 0) | (Group::Navigator, 0) | (Group::Brushes, _))
+     }
+ 
+     fn tab_mut(self, tabs: &mut DockTabs) -> &mut usize {
+         match self {
+             Group::Color => &mut tabs.color,
++            Group::Brushes => &mut tabs.brushes,
+             Group::Properties => &mut tabs.properties,
+             Group::Character => &mut tabs.character,
+             Group::Navigator => &mut tabs.navigator,
+@@ -136,6 +143,7 @@
+     pub fn shown(self, panels: &Panels) -> bool {
+         match self {
+             Group::Color => panels.color,
++            Group::Brushes => panels.brush_settings && panels.brush_attached,
+             Group::Properties => panels.properties,
+             Group::Character => panels.character,
+             Group::Navigator => panels.navigator,
+@@ -147,6 +155,7 @@
+     fn shown_mut(self, panels: &mut Panels) -> &mut bool {
+         match self {
+             Group::Color => &mut panels.color,
++            Group::Brushes => &mut panels.brush_settings,
+             Group::Properties => &mut panels.properties,
+             Group::Character => &mut panels.character,
+             Group::Navigator => &mut panels.navigator,
+@@ -562,6 +571,10 @@
+                 ui.close();
+             }
+             ui.separator();
++            if g == Group::Brushes && ui.button(tl!("Float")).clicked() {
++                app.ui.panels.brush_attached = false;
++                ui.close();
++            }
+             if ui.button(tl!("Close Tab Group")).clicked() {
+                 actions.push(Action::Close(g));
+                 ui.close();
+--- a/crates/ui-egui/src/dock_tests.rs
++++ b/crates/ui-egui/src/dock_tests.rs
+@@ -48,7 +48,7 @@
+ #[test]
+ fn bad_stored_values_are_sanitised() {
+     let mut l = DockLayout { order: vec![Group::Layers, Group::Layers, Group::Color], ..Default::default() };
+-    assert_eq!(l.order(), vec![Group::Layers, Group::Color, Group::Properties, Group::Character, Group::Navigator, Group::History]);
++    assert_eq!(l.order(), vec![Group::Layers, Group::Color, Group::Brushes, Group::Properties, Group::Character, Group::Navigator, Group::History]);
+     for bad in [f32::NAN, -10.0, f32::INFINITY, 1e12] {
+         l.heights.insert(Group::Color, bad);
+         let h = l.height(Group::Color);
+@@ -56,7 +56,7 @@
+     }
+     // Unknown fields, wrong types and old UI state all load.
+     let back: DockLayout = serde_json::from_value(json!({"order": ["layers"], "bogus": 1})).unwrap();
+-    assert_eq!(back.order(), vec![Group::Layers, Group::Color, Group::Properties, Group::Character, Group::Navigator, Group::History]);
++    assert_eq!(back.order(), vec![Group::Layers, Group::Color, Group::Brushes, Group::Properties, Group::Character, Group::Navigator, Group::History]);
+     let mut ui = serde_json::to_value(crate::state::UiState::default()).unwrap();
+     ui.as_object_mut().unwrap().remove("dock");
+     let ui: crate::state::UiState = serde_json::from_value(ui).unwrap();
+@@ -120,6 +120,82 @@
+     }
+     h.event(egui::Event::PointerButton { pos: to, button: PointerButton::Primary, pressed: false, modifiers: Modifiers::NONE });
+     h.run_steps(3);
++}
++
++#[test]
++fn attached_brushes_share_dock_width_and_resize_vertically() {
++    for theme in [ThemeKind::ProMedium, ThemeKind::Studio] {
++        let (mut app, _, _) = app_with_layers();
++        app.ui.panels.brush_settings = true;
++        app.ui.panels.brush_attached = true;
++        app.ui.brush_tab = 1;
++        app.ui.dock_tabs.brushes = 1;
++        let mut h = harness(app, vec2(1366.0, 1000.0), theme);
++        let color = rect_of(&h, Group::Color);
++        let brushes = rect_of(&h, Group::Brushes);
++        assert_eq!(color.x_range(), brushes.x_range());
++        assert_eq!(brushes.top(), color.bottom() + GAP);
++        if theme == ThemeKind::ProMedium {
++            assert_eq!(rect_of(&h, Group::Properties).top(), brushes.bottom() + GAP);
++        }
++        let split = pos2(brushes.center().x, brushes.bottom() + GAP / 2.0);
++        drag(&mut h, split, split + vec2(0.0, 60.0));
++        assert!(rect_of(&h, Group::Brushes).height() > brushes.height() + 40.0);
++        let height = rect_of(&h, Group::Brushes).height();
++        let dock_left = color.left() - if theme == ThemeKind::ProMedium { 2.0 } else { 8.0 };
++        drag(&mut h, pos2(dock_left, 500.0), pos2(dock_left - 100.0, 500.0));
++        let wider = rect_of(&h, Group::Brushes);
++        assert!(wider.width() > brushes.width() + 70.0, "{theme:?}: {brushes:?} -> {wider:?}");
++        assert_eq!(wider.x_range(), rect_of(&h, Group::Layers).x_range());
++        assert_eq!(wider.height(), height);
++        let saved = h.state().session.prefs().panel_layout.clone();
++        let (mut restored, _, _) = app_with_layers();
++        apply(&mut restored, &saved);
++        assert_eq!(restored.ui.dock.height(Group::Brushes), h.state().ui.dock.height(Group::Brushes));
++        assert!(restored.ui.panels.brush_attached);
++    }
++}
++
++#[test]
++fn attached_brushes_reopen_after_collapse_and_tab_close() {
++    let (mut app, _, _) = app_with_layers();
++    app.ui.panels.brush_attached = true;
++    app.ui.dock.set_collapsed(Group::Brushes, true);
++    app.ui.dock.hide_tab(Group::Brushes, 1, true);
++    let ctx = egui::Context::default();
++    crate::menus::invoke(&mut app, &ctx, "window.panel.brushes", json!({})).unwrap();
++    assert!(Group::Brushes.shown(&app.ui.panels));
++    assert!(!app.ui.dock.is_collapsed(Group::Brushes));
++    assert_eq!(app.ui.dock.visible_tabs(Group::Brushes, true), vec![(0, "Brush Settings"), (1, "Brushes")]);
++    app.ui.dock.set_collapsed(Group::Brushes, true);
++    crate::menus::invoke(&mut app, &ctx, "window.toggle.brushSettings", json!({})).unwrap();
++    assert!(Group::Brushes.shown(&app.ui.panels));
++    assert!(!app.ui.dock.is_collapsed(Group::Brushes));
++    assert_eq!(app.ui.dock_tabs.brushes, 0);
++}
++
++#[test]
++fn attached_brush_settings_do_not_expand_or_move_the_dock() {
++    let (mut app, _, _) = app_with_layers();
++    app.ui.panels.brush_settings = true;
++    app.ui.panels.brush_attached = true;
++    app.ui.brush_tab = 1;
++    app.ui.dock_tabs.brushes = 1;
++    let mut h = harness(app, vec2(1366.0, 768.0), ThemeKind::ProMedium);
++    for width in [250.0, 380.0, 520.0] {
++        crate::panels::request_dock_width(&h.ctx, width);
++        h.run_steps(4);
++        let rects = last_rects(&h.ctx);
++        h.state_mut().ui.brush_tab = 0;
++        h.state_mut().ui.dock_tabs.brushes = 0;
++        for section in 0..crate::brush_panel::SECTIONS.len() {
++            h.state_mut().ui.brush_section = section;
++            h.run_steps(3);
++            assert_eq!(last_rects(&h.ctx), rects, "section {section} at width {width}");
++        }
++        h.state_mut().ui.brush_tab = 1;
++        h.state_mut().ui.dock_tabs.brushes = 1;
++    }
+ }
+ 
+ #[test]
+@@ -681,7 +757,7 @@
+     let old = DockLayout { order: vec![Group::Color, Group::Properties, Group::Navigator, Group::History, Group::Layers], ..Default::default() };
+     assert_eq!(old.order(), Group::ALL.to_vec());
+     let moved = DockLayout { order: vec![Group::Layers, Group::Color], ..Default::default() };
+-    assert_eq!(moved.order(), vec![Group::Layers, Group::Color, Group::Properties, Group::Character, Group::Navigator, Group::History]);
++    assert_eq!(moved.order(), vec![Group::Layers, Group::Color, Group::Brushes, Group::Properties, Group::Character, Group::Navigator, Group::History]);
+ }
+ 
+ type StripProbe = Option<(Vec<(usize, Rect)>, Rect, Option<Rect>, Rect)>;
+--- a/crates/ui-egui/src/i18n/cs.tsv
++++ b/crates/ui-egui/src/i18n/cs.tsv
+@@ -2441,3 +2441,6 @@
+ 	Front Image	Přední obraz
+ 	Search settings…	Hledat nastavení…
+ 	No matching settings	Žádná odpovídající nastavení
++
++	Attach to right sidebar	Připojit k pravému postrannímu panelu
++	Float	Uvolnit
+--- a/crates/ui-egui/src/i18n/de.tsv
++++ b/crates/ui-egui/src/i18n/de.tsv
+@@ -2479,3 +2479,6 @@
+ 	Front Image	Vorderes Bild
+ 	Search settings…	Einstellungen durchsuchen…
+ 	No matching settings	Keine passenden Einstellungen
++
++	Attach to right sidebar	An rechte Seitenleiste anheften
++	Float	Abdocken
+--- a/crates/ui-egui/src/i18n/el.tsv
++++ b/crates/ui-egui/src/i18n/el.tsv
+@@ -3548,3 +3548,6 @@
+ 	Front Image	Μπροστινή εικόνα
+ 	Search settings…	Αναζήτηση ρυθμίσεων…
+ 	No matching settings	Δεν βρέθηκαν ρυθμίσεις
++
++	Attach to right sidebar	Προσάρτηση στη δεξιά πλευρική στήλη
++	Float	Αποδέσμευση
+--- a/crates/ui-egui/src/i18n/es.tsv
++++ b/crates/ui-egui/src/i18n/es.tsv
+@@ -2520,3 +2520,6 @@
+ 	Front Image	Imagen frontal
+ 	Search settings…	Buscar ajustes…
+ 	No matching settings	No hay ajustes que coincidan
++
++	Attach to right sidebar	Acoplar a la barra lateral derecha
++	Float	Desacoplar
+--- a/crates/ui-egui/src/i18n/fr.tsv
++++ b/crates/ui-egui/src/i18n/fr.tsv
+@@ -2858,3 +2858,6 @@
+ 	Front Image	Image de premier plan
+ 	Search settings…	Rechercher des réglages…
+ 	No matching settings	Aucun réglage correspondant
++
++	Attach to right sidebar	Ancrer à la barre latérale droite
++	Float	Détacher
+--- a/crates/ui-egui/src/i18n/id.tsv
++++ b/crates/ui-egui/src/i18n/id.tsv
+@@ -2845,3 +2845,6 @@
+ 	Front Image	Gambar Depan
+ 	Search settings…	Cari pengaturan…
+ 	No matching settings	Tidak ada pengaturan yang cocok
++
++	Attach to right sidebar	Sematkan ke bilah sisi kanan
++	Float	Jadikan mengambang
+--- a/crates/ui-egui/src/i18n/it.tsv
++++ b/crates/ui-egui/src/i18n/it.tsv
+@@ -2510,3 +2510,6 @@
+ 	Front Image	Immagine in primo piano
+ 	Search settings…	Cerca impostazioni…
+ 	No matching settings	Nessuna impostazione corrispondente
++
++	Attach to right sidebar	Aggancia alla barra laterale destra
++	Float	Sgancia
+--- a/crates/ui-egui/src/i18n/ja.tsv
++++ b/crates/ui-egui/src/i18n/ja.tsv
+@@ -3459,3 +3459,6 @@
+ 	Front Image	前面の画像
+ 	Search settings…	設定を検索…
+ 	No matching settings	一致する設定はありません
++
++	Attach to right sidebar	右サイドバーに固定
++	Float	フローティングにする
+--- a/crates/ui-egui/src/i18n/ko.tsv
++++ b/crates/ui-egui/src/i18n/ko.tsv
+@@ -3019,3 +3019,6 @@
+ 	Front Image	전면 이미지
+ 	Search settings…	설정 검색…
+ 	No matching settings	일치하는 설정 없음
++
++	Attach to right sidebar	오른쪽 사이드바에 고정
++	Float	분리
+--- a/crates/ui-egui/src/i18n/nl.tsv
++++ b/crates/ui-egui/src/i18n/nl.tsv
+@@ -3618,3 +3618,6 @@
+ 	Search settings…	Instellingen zoeken…
+ 	No matching settings	Geen overeenkomende instellingen
+ 	PhotoCraft — Screen Color Picker	PhotoCraft — Schermkleurkiezer
++
++	Attach to right sidebar	Aan rechterzijbalk koppelen
++	Float	Loskoppelen
+--- a/crates/ui-egui/src/i18n/pl.tsv
++++ b/crates/ui-egui/src/i18n/pl.tsv
+@@ -3459,3 +3459,6 @@
+ 	Front Image	Obraz na wierzchu
+ 	Search settings…	Szukaj ustawień…
+ 	No matching settings	Brak pasujących ustawień
++
++	Attach to right sidebar	Przypnij do prawego panelu bocznego
++	Float	Odłącz
+--- a/crates/ui-egui/src/i18n/pt-br.tsv
++++ b/crates/ui-egui/src/i18n/pt-br.tsv
+@@ -2866,3 +2866,6 @@
+ 	Front Image	Imagem frontal
+ 	Search settings…	Pesquisar configurações…
+ 	No matching settings	Nenhuma configuração encontrada
++
++	Attach to right sidebar	Encaixar na barra lateral direita
++	Float	Desencaixar
+--- a/crates/ui-egui/src/i18n/ru.tsv
++++ b/crates/ui-egui/src/i18n/ru.tsv
+@@ -2725,3 +2725,6 @@
+ 	Rasterize Layer Style	Растрировать стиль слоя
+ 	Search settings…	Поиск настроек…
+ 	No matching settings	Нет подходящих настроек
++
++	Attach to right sidebar	Закрепить на правой боковой панели
++	Float	Открепить
+--- a/crates/ui-egui/src/i18n/uk.tsv
++++ b/crates/ui-egui/src/i18n/uk.tsv
+@@ -3546,3 +3546,6 @@
+ 	Search settings…	Пошук налаштувань…
+ 	No matching settings	Немає відповідних налаштувань
+ 	PhotoCraft — Screen Color Picker	PhotoCraft — Піпетка кольору екрана
++
++	Attach to right sidebar	Закріпити на правій бічній панелі
++	Float	Відкріпити
+--- a/crates/ui-egui/src/i18n/zh-hans.tsv
++++ b/crates/ui-egui/src/i18n/zh-hans.tsv
+@@ -2448,3 +2448,6 @@
+ 	Front Image	前面的图像
+ 	Search settings…	搜索设置…
+ 	No matching settings	没有匹配的设置
++
++	Attach to right sidebar	附加到右侧边栏
++	Float	浮动
+--- a/crates/ui-egui/src/i18n/zh-hant.tsv
++++ b/crates/ui-egui/src/i18n/zh-hant.tsv
+@@ -2418,3 +2418,6 @@
+ 	Front Image	前面的影像
+ 	Search settings…	搜尋設定…
+ 	No matching settings	沒有符合的設定
++
++	Attach to right sidebar	附加至右側邊欄
++	Float	浮動
+--- a/crates/ui-egui/src/menus.rs
++++ b/crates/ui-egui/src/menus.rs
+@@ -196,10 +196,18 @@
+         // Window › Brushes opens the Brush Settings window on its presets tab.
+         app.ui.panels.brush_settings = true;
+         app.ui.brush_tab = 1;
++        if app.ui.panels.brush_attached {
++            app.ui.dock_tabs.brushes = 1;
++            crate::dock::reveal(app, crate::dock::Group::Brushes);
++        }
+         return Ok(Value::Null);
+     }
+     if id == "window.panel.brushSettings" {
+         app.ui.brush_tab = 0;
++        if app.ui.panels.brush_attached {
++            app.ui.dock_tabs.brushes = 0;
++            crate::dock::reveal(app, crate::dock::Group::Brushes);
++        }
+     }
+     // View/Window/Type shell items, and dialogs/pickers in front of File commands.
+     // Edit › Preferences, Keyboard Shortcuts, Color Settings and other Edit dialogs.
+@@ -534,6 +542,15 @@
+             Ok(json!({"document": to}))
+         }
+         t if t.starts_with("window.toggle.") => {
++            if t == "window.toggle.brushSettings" && app.ui.panels.brush_attached {
++                if app.ui.panels.brush_settings && !app.ui.dock.is_collapsed(crate::dock::Group::Brushes) {
++                    app.ui.panels.brush_settings = false;
++                } else {
++                    app.ui.dock_tabs.brushes = 0;
++                    crate::dock::reveal(app, crate::dock::Group::Brushes);
++                }
++                return Ok(Value::Null);
++            }
+             // A shown but collapsed dock group is expanded rather than hidden (#129).
+             if let Some(g) = crate::dock::Group::from_key(&t["window.toggle.".len()..]).filter(|g| g.shown(&app.ui.panels) && app.ui.dock.is_collapsed(*g)) {
+                 crate::dock::reveal(app, g);
+--- a/crates/ui-egui/src/panels.rs
++++ b/crates/ui-egui/src/panels.rs
+@@ -1514,6 +1514,7 @@
+     // Floating in Studio, Properties docks only in Pro (Photoshop).
+     let shown: Vec<Group> = [
+         (Group::Color, p.color),
++        (Group::Brushes, p.brush_settings && p.brush_attached),
+         (Group::Properties, t.pro && p.properties),
+         (Group::Character, p.character),
+         (Group::Navigator, p.navigator),
+@@ -1542,6 +1543,7 @@
+     use crate::dock::Group;
+     let pro = Tokens::get(ui.ctx()).pro;
+     match (group, tab) {
++        (Group::Brushes, _) => crate::brush_panel::attached(app, ui),
+         (Group::Color, 2) => crate::preset_panels::gradients_panel(app, ui),
+         (Group::Color, 3) => crate::preset_panels::patterns_panel(app, ui),
+         (Group::Color, 0) if pro => color_field(app, ui),
+--- a/crates/ui-egui/src/state.rs
++++ b/crates/ui-egui/src/state.rs
+@@ -336,9 +336,12 @@
+     pub toolbar: bool,
+     pub options_bar: bool,
+     pub status_bar: bool,
+-    /// Window › Brush Settings (F5): floating, like Photoshop's.
++    /// Window › Brush Settings (F5): visible as a floating or attached panel.
+     #[serde(default)]
+     pub brush_settings: bool,
++    /// Attach the brush browser/settings beside the right dock; old layouts remain floating.
++    #[serde(default)]
++    pub brush_attached: bool,
+     /// Window › Character / Paragraph: the Character | Paragraph dock group (#150).
+     #[serde(default)]
+     pub character: bool,
+@@ -377,6 +380,7 @@
+             options_bar: true,
+             status_bar: true,
+             brush_settings: false,
++            brush_attached: false,
+             character: false,
+             toolbar_double: false,
+             dock: true,
+@@ -861,6 +865,7 @@
+ #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+ #[serde(default)]
+ pub struct DockTabs {
++    pub brushes: usize,
+     pub properties: usize,
+     pub color: usize,
+     pub layers: usize,
